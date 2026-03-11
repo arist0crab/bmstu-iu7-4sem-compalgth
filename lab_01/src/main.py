@@ -1,5 +1,5 @@
-from pathlib import Path
 import sys
+from pathlib import Path
 
 sys.path.append(str(Path(__file__).parent))
 
@@ -7,7 +7,7 @@ from filereader import load_all_data
 from interpolation import create_interpolators
 from models import compute_current_density
 from solver import solve_ode
-from calculator import compute_derived_quantities, compute_statistics, compute_integrals
+from calculator import compute_derived_quantities, compute_statistics
 from visualizer import create_visualizer
 
 
@@ -54,6 +54,7 @@ def main():
 
     visualize = create_visualizer(output_dir=str(output_dir))
     files = visualize(solution, stats, prefix='final_')
+
 
 if __name__ == "__main__":
     import argparse
