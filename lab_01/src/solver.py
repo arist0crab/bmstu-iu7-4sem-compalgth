@@ -1,63 +1,100 @@
-"""
-Модуль численного решения ОДУ.
-Реализует метод Рунге-Кутты 2-го порядка (предиктор-корректор).
-"""
+import numpy as np
 
 
-def solve_temperature(t_span, t0, tau, initial_temp,
-                      current_interpolator,
-                      tables, config):
-    """
-    Главная функция решателя.
-
-    Args:
-        t_span: (t_start, t_end)
-        tau: шаг по времени
-        initial_temp: T0
-        current_interpolator: функция для получения I(t)
-        tables: словарь со всеми интерполированными таблицами
-        config: параметры конфигурации
-
-    Returns:
-        dict: {
-            'time': array[...],
-            'temperature': array[...],
-            'pressure': array[...],
-            'sigma': array[...],
-            'q': array[...]
-        }
-    """
-    pass
-
-
-def _pressure_from_temperature(t, nh_interpolator, nh_const, bracket):
-    """
-    Находит давление p из уравнения Nh(T,p) = const.
-    Использует метод дихотомии (половинного деления).
-
-    Returns:
-        float: давление p
-    """
-    pass
+def find_pressure(temperature, nh_interp, nh_const, pressure_bracket, max_iter=100):
+    a, b = pressure_bracket
+    fa = nh_interp(temperature, a) - nh_const
+    fb = nh_interp(temperature, b) - nh_const
+    
+    if fa * fb > 0:
+        return a
+    
+    for _ in range(max_iter):
+        c = (a + b) * 0.5
+        fc = nh_interp(temperature, c) - nh_const
+        
+        if abs(fc) < 1e-10:
+            return c
+        
+        if fa * fc < 0:
+            b = c
+            fb = fc
+        else:
+            a = c
+            fa = fc
+    
+    return (a + b) * 0.5
 
 
-def _rk2_step(t_n, t_np1, T_n, p_n,
-              current_interpolator,
-              nh_interpolator,
-              sigma_interpolator,
-              q_interpolator,
-              c_interpolator,
-              config):
-    """
-    Выполняет один шаг метода Рунге-Кутты 2-го порядка.
+def rk2_step(t, T, tau, current_density_func, nh_interp, sigma_interp, q_interp, c_interp, config):
+    j = current_density_func(t)
+    
+    p_n = find_pressure(T, nh_interp, config.NH_CONST, config.PRESSURE_BRACKET)
+    
+    sigma_n = sigma_interp(T, p_n)
+    q_n = q_interp(T, p_n)
+    c_n = c_interp(T, p_n)
+    
+    phi_n = (j * j / sigma_n - q_n) / c_n
+    
+    T_half = T + 0.5 * tau * phi_n
+    
+    p_half = find_pressure(T_half, nh_interp, config.NH_CONST, config.PRESSURE_BRACKET)
+    
+    sigma_half = sigma_interp(T_half, p_half)
+    q_half = q_interp(T_half, p_half)
+    c_half = c_interp(T_half, p_half)
+    
+    phi_half = (j * j / sigma_half - q_half) / c_half
+    
+    T_next = T + tau * phi_half
+    
+    return T_next, p_n, p_half, sigma_n, q_n
 
-    Алгоритм из задания:
-    1. Определить p_n из уравнения (3) по T_n
-    2. T_{n+1/2} = T_n + tau * phi(T_n, p_n)
-    3. p_{n+1/2} из (3) по T_{n+1/2}
-    4. T_{n+1} = T_n + tau * phi(T_{n+1/2}, p_{n+1/2})
 
-    Returns:
-        tuple: (T_{n+1}, p_{n+1/2}, p_n, sigma_n, q_n)
-    """
-    pass
+def solve_ode(t_span, tau, T0, current_density_func, interpolators, config):
+    t_start, t_end = t_span
+    n_steps = int((t_end - t_start) / tau) + 1
+    
+    t_array = np.linspace(t_start, t_end, n_steps)
+    T_array = np.zeros(n_steps)
+    p_array = np.zeros(n_steps)
+    sigma_array = np.zeros(n_steps)
+    q_array = np.zeros(n_steps)
+    
+    T_array[0] = T0
+    p_array[0] = find_pressure(T0, interpolators['nh'], config.NH_CONST, config.PRESSURE_BRACKET)
+    
+    for i in range(n_steps - 1):
+        T_next, p_n, p_half, sigma_n, q_n = rk2_step(
+            t_array[i], T_array[i], tau,
+            current_density_func,
+            interpolators['nh'],
+            interpolators['sigma'],
+            interpolators['q'],
+            interpolators['c'],
+            config
+        )
+        
+        T_array[i + 1] = T_next
+        p_array[i + 1] = p_half
+        sigma_array[i + 1] = sigma_n
+        q_array[i + 1] = q_n
+    
+    return {
+        'time': t_array,
+        'temperature': T_array,
+        'pressure': p_array,
+        'sigma': sigma_array,
+        'q': q_array
+    }
+
+
+def create_solver(config):
+    def solve(t_span, T0, current_density_func, interpolators):
+        return solve_ode(
+            t_span, config.TAU, T0,
+            current_density_func, interpolators, config
+        )
+    
+    return solve
