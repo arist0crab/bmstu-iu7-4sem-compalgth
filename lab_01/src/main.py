@@ -1,74 +1,71 @@
-#!/usr/bin/env python3
-"""
-Главный скрипт лабораторной работы.
-Запускает полный цикл: чтение данных -> интерполяция -> решение -> вывод.
-"""
+from pathlib import Path
+import sys
+
+sys.path.append(str(Path(__file__).parent))
+
+from filereader import load_all_data
+from interpolation import create_interpolators
+from models import compute_current_density
+from solver import solve_ode
+from calculator import compute_derived_quantities, compute_statistics, compute_integrals
+from visualizer import create_visualizer
+
+
+class Config:
+    R_TUBE = 0.25
+    L_TUBE = 12.0
+    TAU = 1e-6
+    T0 = 5400.0
+    T0_TIME = 14e-6
+    TK_TIME = 450e-6
+    PRESSURE_BRACKET = [0.3, 2.5]
+    NH_CONST = 7.242e4 * 0.04 / 300.0
 
 
 def main():
-    # 1. Загружаем конфигурацию
-    import config
+    data_path = Path(__file__).parent.parent / 'data' / 'data.txt'
+    raw_data = load_all_data(str(data_path))
+    interpolators = create_interpolators(raw_data)
 
-    # 2. Читаем исходные данные
-    from file_reader import read_all_data
-    raw_data = read_all_data('data/data.txt')
+    def current_density_func(t):
+        current = interpolators['current'](t)
+        return compute_current_density(current, Config.R_TUBE)
 
-    # 3. Создаём интерполяторы для всех таблиц
-    from interpolation import interpolate_1d, interpolate_2d
-
-    # Функции-интерполяторы с "зашитыми" данными (замыкание)
-    def current_interpolator(t):
-        return interpolate_1d(raw_data['current']['time'],
-                              raw_data['current']['current'],
-                              t, degree=3)
-
-    def nh_interpolator(t, p):
-        return interpolate_2d(raw_data['nh']['temperatures'],
-                              raw_data['nh']['pressures'],
-                              raw_data['nh']['values'],
-                              t, p, t_degree=2, p_degree=2)
-
-    def sigma_interpolator(t, p):
-        return interpolate_2d(raw_data['sigma']['temperatures'],
-                              raw_data['sigma']['pressures'],
-                              raw_data['sigma']['values'],
-                              t, p, t_degree=2, p_degree=2)
-
-    # ... аналогично для q и c
-
-    # 4. Решаем ОДУ
-    from solver import solve_temperature
-    tables = {
-        'nh': nh_interpolator,
-        'sigma': sigma_interpolator,
-        'q': q_interpolator,
-        'c': c_interpolator
-    }
-
-    solution = solve_temperature(
-        t_span=(config.T0_TIME, config.TK_TIME),
-        tau=config.TAU,
-        initial_temp=config.T0,
-        current_interpolator=current_interpolator,
-        tables=tables,
-        config=config
+    solution = solve_ode(
+        (Config.T0_TIME, Config.TK_TIME),
+        Config.TAU,
+        Config.T0,
+        current_density_func,
+        interpolators,
+        Config
     )
 
-    # 5. Рассчитываем дополнительные величины
-    from calculator import compute_derived_quantities, compute_statistics
-    full_solution = compute_derived_quantities(
-        solution, sigma_interpolator, q_interpolator, config
+    solution = compute_derived_quantities(
+        solution,
+        interpolators['sigma'],
+        interpolators['q'],
+        Config
     )
-    stats = compute_statistics(full_solution)
 
-    # 6. Выводим результаты
-    from visualizer import print_results_table, plot_all_quantities
-    print_results_table(full_solution, filename='output/results.txt')
-    print("Статистика:", stats)
-    plot_all_quantities(full_solution, save_path='output/plots/')
+    stats = compute_statistics(solution)
 
-    print("Расчёт завершён успешно!")
+    output_dir = Path(__file__).parent.parent / 'output'
+    output_dir.mkdir(parents=True, exist_ok=True)
 
+    visualize = create_visualizer(output_dir=str(output_dir))
+    files = visualize(solution, stats, prefix='final_')
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--no-plot', action='store_true')
+
+    args = parser.parse_args()
+
+    if args.no_plot:
+        import matplotlib
+
+        matplotlib.use('Agg')
+
     main()
